@@ -22,6 +22,13 @@ hl.monitor({
     scale    = "auto",
 })
 hl.monitor({
+    output   = "eDP-1",
+    mode     = "3000x2000@60.00Hz",
+    position = "0x0",
+    scale    = 2,
+    vrr      = 3,
+})
+hl.monitor({
     output   = "DP-3",
     mode     = "3840x2160@120",
     position = "0x1080",
