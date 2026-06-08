@@ -57,11 +57,7 @@ make_ps1() {
 
 make_ps1 34 32 33
 
-<<<<<<< HEAD
 unset -f ps1_c make_ps1
-=======
-# unset -f ps1_c make_ps1
->>>>>>> 75b0490 (laptop commit)
 # ===== END create prompt ======
 
 recent() {
