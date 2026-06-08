@@ -452,6 +452,7 @@ hl.bind(
 -- Move/resize windows with mainMod + LMB/RMB and dragging
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
+hl.bind(mainMod .. " + SHIFT + mouse:272", hl.dsp.window.resize(), { mouse = true })
 
 -- Laptop multimedia keys for volume and LCD brightness
 hl.bind(
@@ -476,12 +477,30 @@ hl.bind(
 )
 hl.bind(
     "XF86MonBrightnessUp",
-    hl.dsp.exec_cmd("brightnessctl -e4 -n2 set 5%+"),
+    hl.dsp.exec_cmd([[
+        b=$(brightnessctl -m -e4 -n6 set 5%+ | cut -d',' -f4 | sed 's/%$//')
+        b=$(( ($b - 35) * 100 / 65 ))
+        dunstify \
+            -a "brightness" \
+            -h "string:x-dunst-stack-tag:brightness" \
+            -h "int:value:$b" \
+            -t 1000 \
+            "Brightness" "${b}%"
+    ]]),
     { locked = true, repeating = true }
 )
 hl.bind(
     "XF86MonBrightnessDown",
-    hl.dsp.exec_cmd("brightnessctl -e4 -n2 set 5%-"),
+    hl.dsp.exec_cmd([[
+        b=$(brightnessctl -m -e4 -n6 set 5%- | cut -d',' -f4 | sed 's/%$//')
+        b=$(( ($b - 35) * 100 / 65 ))
+        dunstify \
+            -a "brightness" \
+            -h "string:x-dunst-stack-tag:brightness" \
+            -h "int:value:$b" \
+            -t 1000 \
+            "Brightness" "${b}%"
+    ]]),
     { locked = true, repeating = true }
 )
 

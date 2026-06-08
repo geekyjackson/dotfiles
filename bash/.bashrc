@@ -5,6 +5,26 @@
 # If not running interactively, don't do anything
 [[ $- != *i* ]] && return
 
+if [ "$TERM" = "linux" ]; then
+    echo -en "\e]P01D2021" #bg0
+    echo -en "\e]P8928374" #grey
+    echo -en "\e]P1CC241D" #darkred
+    echo -en "\e]P9FB4934" #red
+    echo -en "\e]P298971A" #darkgreen
+    echo -en "\e]PAB8BB26" #green
+    echo -en "\e]P3D79921" #darkyellow
+    echo -en "\e]PBFABD2F" #yellow
+    echo -en "\e]P4458588" #darkblue
+    echo -en "\e]PC83A599" #blue
+    echo -en "\e]P5B16286" #darkmagenta
+    echo -en "\e]PDD3869B" #magenta
+    echo -en "\e]P6689D6A" #darkcyan
+    echo -en "\e]PE8EC07C" #cyan
+    echo -en "\e]P7A89984" #fg4
+    echo -en "\e]PFEBDBB2" #fg1
+    clear #for background artifacting
+fi
+
 [[ $(tty) == "/dev/tty1" ]] && {
     read -r -p "Start Hyprland? [Y/n] " answer
     [[ "$answer" =~ ^[Nn]([Oo])?$ ]] || start-hyprland
