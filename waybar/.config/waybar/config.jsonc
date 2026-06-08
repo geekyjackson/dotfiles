@@ -1,0 +1,37 @@
+// -*- mode: jsonc -*-
+[
+{
+    "output": ["DP-3", "DP-5"],
+    "position": "top",
+    "margin": "8 8 0 8",
+    "name": "horizontalbar",
+    "include": [
+        "config_general.json"
+    ],
+    "hyprland/workspaces": {
+        "workspace-taskbar": {
+            "orientation": "horizontal"
+        }
+    },
+    "clock": {
+        "format": "{:%I:%M %p}"
+    }
+},
+{
+    "output": "DP-4",
+    "position": "top",
+    "margin": "8 8 0 8",
+    "name": "horizontalbar",
+    "include": [
+        "config_general.json"
+    ],
+    "hyprland/workspaces": {
+        "workspace-taskbar": {
+            "orientation": "horizontal"
+        }
+    },
+    "clock": {
+        "format": "{:%I:%M %p}"
+    }
+}
+]

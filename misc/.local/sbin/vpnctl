@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="vpn"
+ACTION="${1:-}"
+WG_IF="${2:-}"
+CONF="/etc/wireguard/${WG_IF}.conf"
+
+MTU_DEFAULT=1390
+
+HAS_IPV4=0
+HAS_IPV6=0
+
+usage() {
+  local prog="${0##*/}"
+  echo "Usage: $prog {up|down} <wireguard-interface>" >&2
+  echo "       $prog status" >&2
+  echo "       $prog list" >&2
+  exit 2
+}
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+print_command() {
+  printf '[#]'
+  printf ' %q' "$@"
+  printf '\n' >&2
+}
+
+run() {
+  print_command "$@"
+  "$@"
+}
+
+run_ok_if_fails() {
+  print_command "$@"
+  "$@" 2>/dev/null || true
+}
+
+print_shell_change() {
+  printf '[#] %s\n' "$*" >&2
+}
+
+rerun_as_root() {
+  [[ "${EUID}" -eq 0 ]] && return 0
+  local script_path
+  script_path="$(readlink -f "$0")"
+  exec sudo -- "$script_path" "$@"
+}
+
+get_interface_field() {
+  local field="$1"
+
+  awk -v wanted="$field" '
+    BEGIN {
+      in_interface = 0
+      wanted = tolower(wanted)
+    }
+
+    /^[[:space:]]*#/ {
+      next
+    }
+
+    /^[[:space:]]*\[/ {
+      in_interface = ($0 ~ /^[[:space:]]*\[Interface\][[:space:]]*$/)
+      next
+    }
+
+    in_interface {
+      line = $0
+
+      # Remove inline comments.
+      sub(/[[:space:]]*[#;].*$/, "", line)
+
+      if (line !~ /=/) {
+        next
+      }
+
+      key = line
+      sub(/=.*/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      key = tolower(key)
+
+      if (key == wanted) {
+        value = line
+        sub(/^[^=]*=/, "", value)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        print value
+      }
+    }
+  ' "$CONF"
+}
+
+split_csv_lines() {
+  tr ',' '\n' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+    | sed '/^$/d'
+}
+
+is_ipv4() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+is_ipv6() {
+  [[ "$1" == *:* ]]
+}
+
+load_interface_config() {
+  [[ -f "$CONF" ]] || die "Config not found: $CONF"
+
+  local config_mtu
+  config_mtu="$(get_interface_field "MTU" | tail -n1 || true)"
+  
+  MTU="${config_mtu:-$MTU_DEFAULT}"
+
+  mapfile -t ADDRESSES < <(get_interface_field "Address" | split_csv_lines)
+  mapfile -t DNS_VALUES < <(get_interface_field "DNS" | split_csv_lines)
+
+  [[ "${#ADDRESSES[@]}" -gt 0 ]] \
+    || die "No Address field found in [Interface] section of $CONF"
+}
+
+delete_stale_interface() {
+  run_ok_if_fails ip link del "$WG_IF"
+  run_ok_if_fails ip -n "$NS" link del "$WG_IF"
+}
+
+ensure_namespace() {
+  run_ok_if_fails ip netns add "$NS"
+  run ip -n "$NS" link set lo up
+}
+
+create_wireguard_interface() {
+  run ip link add "$WG_IF" type wireguard
+  run ip link set "$WG_IF" netns "$NS"
+}
+
+apply_wireguard_config() (
+  local tmp
+
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+
+  chmod 600 "$tmp"
+  
+  wg-quick strip "$CONF" > "$tmp"
+  print_shell_change "wg-quick strip $CONF > $tmp"
+  
+  run ip netns exec "$NS" wg setconf "$WG_IF" "$tmp"
+)
+
+configure_addresses() {
+  local addr
+
+  for addr in "${ADDRESSES[@]}"; do
+    run ip -n "$NS" address add "$addr" dev "$WG_IF"
+
+    if is_ipv6 "$addr"; then
+      HAS_IPV6=1
+    else
+      HAS_IPV4=1
+    fi
+  done
+}
+
+bring_interface_up() {
+  run ip -n "$NS" link set mtu "$MTU" up dev "$WG_IF"
+}
+
+configure_default_routes() {
+  if [[ "$HAS_IPV4" -eq 1 ]]; then
+    run ip -n "$NS" -4 route replace default dev "$WG_IF"
+  fi
+
+  if [[ "$HAS_IPV6" -eq 1 ]]; then
+    run ip -n "$NS" -6 route replace default dev "$WG_IF"
+  fi
+}
+
+write_namespace_dns() {
+  [[ "${#DNS_VALUES[@]}" -gt 0 ]] || return 0
+
+  local dns
+  local resolv_conf="/etc/netns/$NS/resolv.conf"
+  local -a search_domains=()
+
+  mkdir -p "/etc/netns/$NS"
+  print_shell_change "write $resolv_conf"
+
+  {
+    for dns in "${DNS_VALUES[@]}"; do
+      if is_ipv4 "$dns" || is_ipv6 "$dns"; then
+        printf 'nameserver %s\n' "$dns"
+      else
+        search_domains+=("$dns")
+      fi
+    done
+
+    if [[ "${#search_domains[@]}" -gt 0 ]]; then
+      printf 'search'
+
+      for domain in "${search_domains[@]}"; do
+        printf ' %s' "$domain"
+      done
+
+      printf '\n'
+    fi
+  } > "$resolv_conf"
+}
+
+up() {
+  load_interface_config
+
+  delete_stale_interface
+  ensure_namespace
+
+  create_wireguard_interface
+  apply_wireguard_config
+
+  configure_addresses
+  bring_interface_up
+  configure_default_routes
+
+  write_namespace_dns
+
+  echo "Started $WG_IF in namespace $NS"
+}
+
+down() {
+  run_ok_if_fails ip -n "$NS" link del "$WG_IF"
+  run_ok_if_fails ip link del "$WG_IF"
+
+  run_ok_if_fails rm -f "/etc/netns/$NS/resolv.conf"
+  run_ok_if_fails rmdir "/etc/netns/$NS"
+  run_ok_if_fails ip netns delete "$NS"
+
+  echo "Stopped $WG_IF in namespace $NS"
+}
+
+list_interfaces() {
+  local conf
+
+  shopt -s nullglob
+
+  for conf in /etc/wireguard/*.conf; do
+    basename "$conf" .conf
+  done
+
+  shopt -u nullglob
+}
+
+namespace_exists() {
+  ip netns list \
+    | awk '{print $1}' \
+    | grep -Fxq -- "$NS"
+}
+
+status() {
+  if ! namespace_exists; then
+    echo "Namespace $NS: not running"
+    echo "Interfaces: none"
+    return 0
+  fi
+
+  echo "Namespace $NS: running"
+
+  local -a interfaces=()
+  mapfile -t interfaces < <(
+    ip -n "$NS" -br link show \
+      | awk '$1 != "lo" { sub(/@.*/, "", $1); print $1 }'
+  )
+
+  if [[ "${#interfaces[@]}" -eq 0 ]]; then
+    echo "Interfaces: none"
+    return 0
+  fi
+
+  echo "Interfaces:"
+
+  local iface
+  local state
+  local kind
+
+  for iface in "${interfaces[@]}"; do
+    state="$(
+      ip -n "$NS" -br link show dev "$iface" \
+        | awk '{print $2}'
+    )"
+
+    if ip netns exec "$NS" wg show "$iface" >/dev/null 2>&1; then
+      kind="wireguard"
+    else
+      kind="network"
+    fi
+
+    printf '  %s  state=%s  type=%s\n' "$iface" "$state" "$kind"
+  done
+}
+
+require_args() {
+  [[ "$ACTION" == "list" ]] && return 0
+  [[ "$ACTION" == "status" ]] && return 0
+  [[ -n "$ACTION" && -n "$WG_IF" ]] || usage
+}
+
+main() {
+  require_args
+  rerun_as_root "$@"
+
+  case "$ACTION" in
+    up)
+      up
+      ;;
+    down)
+      down
+      ;;
+    status)
+      status
+      ;;
+    list)
+      list_interfaces
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+main "$@"

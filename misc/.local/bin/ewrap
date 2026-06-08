@@ -1,0 +1,7 @@
+#!/bin/sh
+# used for nnn
+if [ -n "$TMUX" ] ; then 
+    tmux split-window -h "vim \"$*\""
+else 
+    nohup kitty vim "$*" & 
+fi

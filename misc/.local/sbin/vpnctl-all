@@ -1,0 +1,498 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="vpn"
+ACTION="${1:-}"
+WG_IF="${2:-}"
+
+MTU_DEFAULT=1390
+ROUTE_METRIC_BASE=100
+
+CONF=""
+MTU="$MTU_DEFAULT"
+HAS_IPV4=0
+HAS_IPV6=0
+
+IPV4_SRC=""
+IPV6_SRC=""
+
+declare -a ADDRESSES=()
+declare -a DNS_VALUES=()
+declare -a RESOLV_VALUES=()
+
+usage() {
+  local prog="${0##*/}"
+  echo "Usage: $prog up [wireguard-interface]" >&2
+  echo "       $prog down [wireguard-interface]" >&2
+  echo "       $prog status" >&2
+  echo "       $prog list" >&2
+  exit 2
+}
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+print_command() {
+  printf '[#]'
+  printf ' %q' "$@"
+  printf '\n' >&2
+}
+
+run() {
+  print_command "$@"
+  "$@"
+}
+
+run_ok_if_fails() {
+  print_command "$@"
+  "$@" 2>/dev/null || true
+}
+
+print_shell_change() {
+  printf '[#] %s\n' "$*" >&2
+}
+
+rerun_as_root() {
+  [[ "${EUID}" -eq 0 ]] && return 0
+  local script_path
+  script_path="$(readlink -f "$0")"
+  exec sudo -- "$script_path" "$@"
+}
+
+get_interface_field() {
+  local conf="$1"
+  local field="$2"
+
+  awk -v wanted="$field" '
+    BEGIN {
+      in_interface = 0
+      wanted = tolower(wanted)
+    }
+
+    /^[[:space:]]*#/ {
+      next
+    }
+
+    /^[[:space:]]*\[/ {
+      in_interface = ($0 ~ /^[[:space:]]*\[Interface\][[:space:]]*$/)
+      next
+    }
+
+    in_interface {
+      line = $0
+
+      sub(/[[:space:]]*[#;].*$/, "", line)
+
+      if (line !~ /=/) {
+        next
+      }
+
+      key = line
+      sub(/=.*/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      key = tolower(key)
+
+      if (key == wanted) {
+        value = line
+        sub(/^[^=]*=/, "", value)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        print value
+      }
+    }
+  ' "$conf"
+}
+
+split_csv_lines() {
+  tr ',' '\n' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+    | sed '/^$/d'
+}
+
+is_ipv4() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+is_ipv6() {
+  [[ "$1" == *:* ]]
+}
+
+load_interface_config() {
+  WG_IF="$1"
+  CONF="/etc/wireguard/${WG_IF}.conf"
+
+  [[ -f "$CONF" ]] || die "Config not found: $CONF"
+
+  MTU="$MTU_DEFAULT"
+  HAS_IPV4=0
+  HAS_IPV6=0
+  IPV4_SRC=""
+  IPV6_SRC=""
+  ADDRESSES=()
+  DNS_VALUES=()
+
+  local config_mtu
+  config_mtu="$(get_interface_field "$CONF" "MTU" | tail -n1 || true)"
+
+  MTU="${config_mtu:-$MTU_DEFAULT}"
+
+  mapfile -t ADDRESSES < <(get_interface_field "$CONF" "Address" | split_csv_lines)
+  mapfile -t DNS_VALUES < <(get_interface_field "$CONF" "DNS" | split_csv_lines)
+
+  [[ "${#ADDRESSES[@]}" -gt 0 ]] \
+    || die "No Address field found in [Interface] section of $CONF"
+}
+
+
+delete_stale_interface() {
+  local iface="$1"
+
+  run_ok_if_fails ip link del "$iface"
+  run_ok_if_fails ip -n "$NS" link del "$iface"
+}
+
+namespace_exists() {
+  ip netns list \
+    | awk '{print $1}' \
+    | grep -Fxq -- "$NS"
+}
+
+ensure_namespace() {
+  if ! namespace_exists; then
+    run ip netns add "$NS"
+  fi
+
+  run ip -n "$NS" link set lo up
+}
+
+create_wireguard_interface() {
+  local iface="$1"
+
+  run ip link add "$iface" type wireguard
+  run ip link set "$iface" netns "$NS"
+}
+
+apply_wireguard_config() (
+  local iface="$1"
+  local tmp
+
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+
+  chmod 600 "$tmp"
+
+  print_shell_change "wg-quick strip $CONF > $tmp"
+  wg-quick strip "$CONF" > "$tmp"
+
+  run ip netns exec "$NS" wg setconf "$iface" "$tmp"
+)
+
+strip_cidr() {
+  printf '%s\n' "${1%%/*}"
+}
+
+address_exists_in_namespace() {
+  local addr="$1"
+
+  ip -n "$NS" -o address show 2>/dev/null \
+    | awk '{print $4}' \
+    | grep -Fxq -- "$addr"
+}
+
+configure_addresses() {
+  local iface="$1"
+  local addr
+  local src
+
+  for addr in "${ADDRESSES[@]}"; do
+    src="$(strip_cidr "$addr")"
+
+    if is_ipv6 "$addr"; then
+      HAS_IPV6=1
+      [[ -z "$IPV6_SRC" ]] && IPV6_SRC="$src"
+    else
+      HAS_IPV4=1
+      [[ -z "$IPV4_SRC" ]] && IPV4_SRC="$src"
+    fi
+
+    if address_exists_in_namespace "$addr"; then
+      print_shell_change "skip duplicate address $addr for $iface"
+      continue
+    fi
+
+    run ip -n "$NS" address add "$addr" dev "$iface"
+  done
+}
+
+bring_interface_up() {
+  local iface="$1"
+
+  run ip -n "$NS" link set dev "$iface" mtu "$MTU" up
+}
+
+configure_default_routes() {
+  local iface="$1"
+  local metric="${2:-}"
+
+  local -a v4_args=(default dev "$iface")
+  local -a v6_args=(default dev "$iface")
+
+  [[ -n "$IPV4_SRC" ]] && v4_args+=(src "$IPV4_SRC")
+  [[ -n "$IPV6_SRC" ]] && v6_args+=(src "$IPV6_SRC")
+
+  if [[ -n "$metric" ]]; then
+    v4_args+=(metric "$metric")
+    v6_args+=(metric "$metric")
+  fi
+
+  if [[ "$HAS_IPV4" -eq 1 ]]; then
+    run ip -n "$NS" -4 route replace "${v4_args[@]}"
+  fi
+
+  if [[ "$HAS_IPV6" -eq 1 ]]; then
+    run ip -n "$NS" -6 route replace "${v6_args[@]}"
+  fi
+}
+
+add_dns_values() {
+  local value
+  local existing
+  local seen
+
+  for value in "${DNS_VALUES[@]}"; do
+    seen=0
+
+    for existing in "${RESOLV_VALUES[@]}"; do
+      if [[ "$existing" == "$value" ]]; then
+        seen=1
+        break
+      fi
+    done
+
+    [[ "$seen" -eq 0 ]] && RESOLV_VALUES+=("$value")
+  done
+}
+
+write_namespace_dns() {
+  [[ "${#RESOLV_VALUES[@]}" -gt 0 ]] || return 0
+
+  local dns
+  local resolv_conf="/etc/netns/$NS/resolv.conf"
+  local -a search_domains=()
+
+  mkdir -p "/etc/netns/$NS"
+  print_shell_change "write $resolv_conf"
+
+  {
+    for dns in "${RESOLV_VALUES[@]}"; do
+      if is_ipv4 "$dns" || is_ipv6 "$dns"; then
+        printf 'nameserver %s\n' "$dns"
+      else
+        search_domains+=("$dns")
+      fi
+    done
+
+    if [[ "${#search_domains[@]}" -gt 0 ]]; then
+      printf 'search'
+
+      for domain in "${search_domains[@]}"; do
+        printf ' %s' "$domain"
+      done
+
+      printf '\n'
+    fi
+  } > "$resolv_conf"
+}
+
+list_interfaces() {
+  local conf
+
+  shopt -s nullglob
+
+  for conf in /etc/wireguard/*.conf; do
+    basename "$conf" .conf
+  done
+
+  shopt -u nullglob
+}
+
+target_interfaces() {
+  if [[ -n "$WG_IF" ]]; then
+    printf '%s\n' "$WG_IF"
+    return 0
+  fi
+
+  list_interfaces
+}
+
+up_one() {
+  local iface="$1"
+  local metric="${2:-}"
+
+  load_interface_config "$iface"
+
+  delete_stale_interface "$iface"
+  create_wireguard_interface "$iface"
+  apply_wireguard_config "$iface"
+
+  configure_addresses "$iface"
+  bring_interface_up "$iface"
+  configure_default_routes "$iface" "$metric"
+
+  add_dns_values
+
+  echo "Started $iface in namespace $NS"
+}
+
+up() {
+  local -a interfaces=()
+  local iface
+  local metric
+  local i=0
+
+  mapfile -t interfaces < <(target_interfaces)
+
+  [[ "${#interfaces[@]}" -gt 0 ]] \
+    || die "No WireGuard configs found in /etc/wireguard"
+
+  ensure_namespace
+
+  RESOLV_VALUES=()
+
+  for iface in "${interfaces[@]}"; do
+    if [[ "${#interfaces[@]}" -gt 1 ]]; then
+      metric="$((ROUTE_METRIC_BASE + i))"
+    else
+      metric=""
+    fi
+
+    up_one "$iface" "$metric"
+    i="$((i + 1))"
+  done
+
+  write_namespace_dns
+}
+
+namespace_has_non_loopback_links() {
+  ip -n "$NS" -br link show 2>/dev/null \
+    | awk '$1 != "lo" { found = 1 } END { exit !found }'
+}
+
+cleanup_namespace_if_empty() {
+  namespace_exists || return 0
+
+  if namespace_has_non_loopback_links; then
+    return 0
+  fi
+
+  run_ok_if_fails rm -f "/etc/netns/$NS/resolv.conf"
+  run_ok_if_fails rmdir "/etc/netns/$NS"
+  run_ok_if_fails ip netns delete "$NS"
+}
+
+down_one() {
+  local iface="$1"
+
+  run_ok_if_fails ip -n "$NS" link del "$iface"
+  run_ok_if_fails ip link del "$iface"
+
+  echo "Stopped $iface in namespace $NS"
+}
+
+down() {
+  local -a interfaces=()
+  local iface
+
+  mapfile -t interfaces < <(target_interfaces)
+
+  [[ "${#interfaces[@]}" -gt 0 ]] \
+    || die "No WireGuard configs found in /etc/wireguard"
+
+  for iface in "${interfaces[@]}"; do
+    down_one "$iface"
+  done
+
+  cleanup_namespace_if_empty
+}
+
+status() {
+  if ! namespace_exists; then
+    echo "Namespace $NS: not running"
+    echo "Interfaces: none"
+    return 0
+  fi
+
+  echo "Namespace $NS: running"
+
+  local -a interfaces=()
+  mapfile -t interfaces < <(
+    ip -n "$NS" -br link show \
+      | awk '$1 != "lo" { sub(/@.*/, "", $1); print $1 }'
+  )
+
+  if [[ "${#interfaces[@]}" -eq 0 ]]; then
+    echo "Interfaces: none"
+    return 0
+  fi
+
+  echo "Interfaces:"
+
+  local iface
+  local state
+  local kind
+
+  for iface in "${interfaces[@]}"; do
+    state="$(
+      ip -n "$NS" -br link show dev "$iface" \
+        | awk '{print $2}'
+    )"
+
+    if ip netns exec "$NS" wg show "$iface" >/dev/null 2>&1; then
+      kind="wireguard"
+    else
+      kind="network"
+    fi
+
+    printf '  %s  state=%s  type=%s\n' "$iface" "$state" "$kind"
+  done
+}
+
+require_args() {
+  case "$ACTION" in
+    up|down)
+      [[ "$#" -le 2 ]] || usage
+      ;;
+    status|list)
+      [[ "$#" -eq 1 ]] || usage
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+main() {
+  require_args "$@"
+  rerun_as_root "$@"
+
+  case "$ACTION" in
+    up)
+      up
+      ;;
+    down)
+      down
+      ;;
+    status)
+      status
+      ;;
+    list)
+      list_interfaces
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+main "$@"

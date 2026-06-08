@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Yazi in Kitty
+Comment=Open directories in yazi inside kitty
+Exec=kitty --directory %f yazi
+MimeType=inode/directory;
+Terminal=false
+NoDisplay=true

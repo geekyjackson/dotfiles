@@ -1,0 +1,129 @@
+{
+    "reload_style_on_change": true,
+    "layer": "bottom", // Waybar at top layer
+    "spacing": 4, // Gaps between modules (4px)
+    "modules-left": [
+        "hyprland/submap",
+        "hyprland/workspaces"
+    ],
+    "modules-right": [
+        "tray",
+        "pulseaudio#mic",
+        "pulseaudio#speaker",
+        "network",
+        "bluetooth",
+        "custom/power",
+        "clock"
+    ],
+    "tray": {
+        "show-passive-items": true,
+        "spacing": 4,
+        "icon-size": 16
+    },
+    "custom/mySpeed": {
+        "exec": "~/.config/waybar/net.sh"
+    },
+    "hyprland/workspaces": {
+        "format": "{icon}{windows}",
+        "format-window-separator": "",
+        "all-outputs": false,
+        "justify": "center",
+        "workspace-taskbar": {
+            "enable": true,
+            "update-active-window": true,
+            "format": "{icon}",
+            "icon-size": 16,
+            "orientation": "horizontal"
+        }
+    },
+    "hyprland/submap": {
+        "format": "<span style=\"italic\">{}</span>"
+    },
+    "pulseaudio#mic": {
+        "format": "{format_source}",
+        "format-source": "",
+        "format-source-muted": "",
+        "on-click": "pavucontrol -t 4"
+    },
+    "pulseaudio#speaker": {
+        "format": "{icon}",
+        "format-muted": "",
+        "format-icons": {
+            "headphone": "",
+            "hands-free": "",
+            "headset": "",
+            "phone": "4",
+            "portable": "5",
+            "car": "6",
+            "default": ["", "", ""]
+        },
+        "on-click": "pavucontrol -t 3"
+    },
+    "bluetooth": {
+        "format-disabled": "󰂲",
+        "format-off": "󰂲",
+        "format-on": "",
+        "format-connected": "",
+        "tooltip-format": "{controller_alias}\t{controller_address}\n\n{num_connections} connected",
+        "tooltip-format-connected": "{controller_alias}\t{controller_address}\n\n{num_connections} connected\n\n{device_enumerate}",
+        "tooltip-format-enumerate-connected": "{device_alias}\t{device_address}",
+        "tooltip-format-enumerate-connected-battery": "{device_alias}\t{device_address}\t{device_battery_percentage}%",
+        "on-click": "blueman-manager"
+    },
+    "network": {
+        "interval": 5,
+        "format-wifi": "",
+        "format-ethernet": "󰈀", 
+        "format-disconnected": "⚠",
+        "on-click": "nm-connection-editor",
+        "tooltip-format": "Interface: {ifname}\nIP: {gwaddr}\nSSID: {essid}\nStrength: {signaldBm} dBm\nFrequency: {frequency} GHz"
+    },
+    "battery": {
+        "bat": "BAT0",
+        "interval": 60,
+        "states": {
+            "warning": 20,
+            "critical": 10
+        },
+        "format": "{icon}",
+        "format-icons": ["", "", "", "", ""],
+        "tooltip-format": "capacity: {capacity}%\ntime: {time}\ntimeTo: {timeTo}\nCycles: {cycles}\nHealth: {health}%",
+        "max-length": 25
+    },
+    "custom/power": {
+        "format" : "󰐥",
+		"tooltip": false,
+		"menu": "on-click",
+		"menu-file": "$HOME/.config/waybar/power_menu.xml", // Menu file in resources folder
+		"menu-actions": {
+			"shutdown": "systemctl poweroff",
+			"reboot": "systemctl reboot",
+			"suspend": "systemctl suspend",
+			"hibernate": "systemctl hibernate"
+		}
+    },
+    "clock": {
+        "format": "{:%I:%M %p}",
+        "tooltip-format": "<tt><small>{calendar}</small></tt>",
+        "calendar": {
+                    "mode"          : "year",
+                    "mode-mon-col"  : 3,
+                    "weeks-pos"     : "right",
+                    "on-scroll"     : 1,
+                    "format": {
+                              "months":     "<span color='#ffead3'><b>{}</b></span>",
+                              "days":       "<span color='#ecc6d9'><b>{}</b></span>",
+                              "weeks":      "<span color='#99ffdd'><b>W{}</b></span>",
+                              "weekdays":   "<span color='#ffcc66'><b>{}</b></span>",
+                              "today":      "<span color='#ff6699'><b><u>{}</u></b></span>"
+                              }
+                    },
+        "actions":  {
+                    "on-click-right": "mode",
+                    "on-scroll-up": "tz_up",
+                    "on-scroll-down": "tz_down",
+                    "on-scroll-up": "shift_up",
+                    "on-scroll-down": "shift_down"
+                    }
+    }
+}

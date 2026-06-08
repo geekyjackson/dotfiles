@@ -1,0 +1,35 @@
+#!/bin/bash
+
+interface="enp9s0"
+interval="0.5"
+
+format_bytes() {
+    local mb10=$(( $1 * 8 / $2 ))
+    format_bytes_OUT="$(( $mb10 / 10 )).$(( $mb10 % 10 ))"
+}
+
+let -a myArr;
+time_ms=$(date +%s%5N)
+myArr=( $(grep $interface /proc/net/dev) )
+downBytes=${myArr[1]}
+upBytes=${myArr[9]}
+
+while true; do
+    new_time_ms=$(date +%s%5N)
+    myArr=( $(grep $interface /proc/net/dev) )
+    
+    dt_ms=$(( new_time_ms - time_ms ))
+
+    format_bytes $(( myArr[1] - downBytes )) $dt_ms
+    mbpsDown="$format_bytes_OUT"
+    format_bytes $(( myArr[9] - upBytes )) $dt_ms
+    mbpsUp="$format_bytes_OUT"
+    
+    printf " %6s mbps   %6s mbps\n" $mbpsDown $mbpsUp 
+    
+    downBytes=${myArr[1]}
+    upBytes=${myArr[9]}
+    time_ms=$new_time_ms
+
+    sleep $interval
+done

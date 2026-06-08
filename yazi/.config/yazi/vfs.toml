@@ -1,0 +1,13 @@
+[services.desktop]
+type = "sftp"
+host = "192.168.8.203"
+user = "jackson"
+port = 22
+key_file = "~/.ssh/id_ed25519"
+
+[services.laptop]
+type = "sftp"
+host = "192.168.8.108"
+user = "jackson"
+port = 22
+key_file = "~/.ssh/id_ed25519"

@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="vpn"
+RUN_AS="${SUDO_USER:-$USER}"
+DETACH=0
+
+VPN_CHECK_TARGET="${VPN_CHECK_TARGET:-1.1.1.1}"
+VPN_HANDSHAKE_MAX_AGE="${VPN_HANDSHAKE_MAX_AGE:-120}"
+VPN_WAIT_TIMEOUT="${VPN_WAIT_TIMEOUT:-15}"
+VPN_PREFERRED_METRIC="${VPN_PREFERRED_METRIC:-5}"
+VPN_PROMOTE_ROUTE="${VPN_PROMOTE_ROUTE:-1}"
+
+usage() {
+    echo "usage: ${0##*/} [--detach|-d] <command> [args...]" >&2
+    exit 2
+}
+
+command_not_found() {
+    echo "vpnrun: command not found: $1" >&2
+    exit 2
+}
+
+vpn_not_ready() {
+    echo "vpnrun: no usable WireGuard handshake in namespace '$NS'" >&2
+    echo "vpnrun: target=$VPN_CHECK_TARGET max_age=${VPN_HANDSHAKE_MAX_AGE}s timeout=${VPN_WAIT_TIMEOUT}s" >&2
+
+    if sudo ip netns list | awk '{print $1}' | grep -qx "$NS"; then
+        echo >&2
+        echo "vpnrun: routes:" >&2
+        sudo ip -n "$NS" route show >&2 || true
+        sudo ip -n "$NS" -6 route show >&2 || true
+
+        echo >&2
+        echo "vpnrun: WireGuard state:" >&2
+        sudo ip netns exec "$NS" wg show >&2 || true
+    fi
+
+    exit 1
+}
+
+ip_family_flag() {
+    if [[ "$VPN_CHECK_TARGET" == *:* ]]; then
+        echo "-6"
+    else
+        echo "-4"
+    fi
+}
+
+get_route_iface() {
+    local family
+    family="$(ip_family_flag)"
+
+    sudo ip -n "$NS" "$family" route get "$VPN_CHECK_TARGET" 2>/dev/null |
+        awk '/ dev / {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev") {
+                    print $(i + 1)
+                    exit
+                }
+            }
+        }'
+}
+
+list_wg_ifaces() {
+    sudo ip netns exec "$NS" wg show interfaces 2>/dev/null |
+        tr ' ' '\n' |
+        sed '/^$/d'
+}
+
+has_recent_handshake() {
+    local iface="$1"
+    local now
+    now="$(date +%s)"
+
+    sudo ip netns exec "$NS" wg show "$iface" latest-handshakes 2>/dev/null |
+        awk -v now="$now" -v max_age="$VPN_HANDSHAKE_MAX_AGE" '
+            $2 > 0 && now - $2 <= max_age { ok = 1 }
+            END { exit ok ? 0 : 1 }
+        '
+}
+
+trigger_handshake_on_iface() {
+    local iface="$1"
+
+    # Force a tiny bit of traffic through this specific tunnel.
+    # Failure is allowed; the handshake timestamp is the real test.
+    sudo ip netns exec "$NS" \
+        timeout 3 ping -n -c 1 -W 1 -I "$iface" "$VPN_CHECK_TARGET" \
+        >/dev/null 2>&1 || true
+}
+
+promote_iface_routes() {
+    local iface="$1"
+
+    (( VPN_PROMOTE_ROUTE )) || return 0
+
+    # Remove any previous wrapper-preferred defaults.
+    while sudo ip -n "$NS" route del default metric "$VPN_PREFERRED_METRIC" 2>/dev/null; do :; done
+    while sudo ip -n "$NS" -6 route del default metric "$VPN_PREFERRED_METRIC" 2>/dev/null; do :; done
+
+    if sudo ip -n "$NS" -4 addr show dev "$iface" | grep -q ' inet '; then
+        sudo ip -n "$NS" route replace default dev "$iface" metric "$VPN_PREFERRED_METRIC"
+    fi
+
+    if sudo ip -n "$NS" -6 addr show dev "$iface" | grep -q ' inet6 '; then
+        sudo ip -n "$NS" -6 route replace default dev "$iface" metric "$VPN_PREFERRED_METRIC"
+    fi
+}
+
+wait_for_vpn_handshake() {
+    local deadline iface route_iface
+    deadline=$(( $(date +%s) + VPN_WAIT_TIMEOUT ))
+
+    if ! sudo ip netns list | awk '{print $1}' | grep -qx "$NS"; then
+        echo "vpnrun: namespace '$NS' does not exist" >&2
+        exit 1
+    fi
+
+    while true; do
+        # First accept the current route-selected interface if it is alive.
+        route_iface="$(get_route_iface || true)"
+
+        if [[ -n "${route_iface:-}" ]] &&
+           sudo ip netns exec "$NS" wg show "$route_iface" >/dev/null 2>&1; then
+            trigger_handshake_on_iface "$route_iface"
+
+            if has_recent_handshake "$route_iface"; then
+                promote_iface_routes "$route_iface"
+                return 0
+            fi
+        fi
+
+        # Otherwise probe every WireGuard interface and choose the first live one.
+        while IFS= read -r iface; do
+            [[ -n "$iface" ]] || continue
+
+            trigger_handshake_on_iface "$iface"
+
+            if has_recent_handshake "$iface"; then
+                promote_iface_routes "$iface"
+                return 0
+            fi
+        done < <(list_wg_ifaces)
+
+        if (( $(date +%s) >= deadline )); then
+            vpn_not_ready
+        fi
+
+        sleep 1
+    done
+}
+
+wrap_detach() {
+    (( DETACH )) || return 0
+
+    local -n cmd_ref=$1
+
+    cmd_ref=(
+        bash -c 'setsid "$@" >/dev/null 2>&1 < /dev/null &' bash
+        "${cmd_ref[@]}"
+    )
+}
+
+run_firefox() {
+    local profile="$HOME/.mozilla/firefox-vpn"
+    local uid_num
+    uid_num="$(id -u)"
+
+    mkdir -p "$profile"
+
+    local -a sudo_env=(
+        "HOME=$HOME"
+        "USER=$USER"
+        "LOGNAME=$USER"
+        "DISPLAY=${DISPLAY:-}"
+        "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+        "XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}"
+        "XDG_RUNTIME_DIR=/run/user/$uid_num"
+        "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$uid_num/bus}"
+    )
+
+    local -a cmd=(
+        env MOZ_NO_REMOTE=1
+        firefox
+        --no-remote
+        --new-instance
+        --profile "$profile"
+        "$@"
+    )
+    wrap_detach cmd
+
+    wait_for_vpn_handshake
+
+    exec sudo "${sudo_env[@]}" \
+        ip netns exec "$NS" \
+        sudo -u "$USER" -E -- \
+        "${cmd[@]}"
+}
+
+run_generic() {
+    local command_name="$1"
+    shift
+
+    local command_path
+    command_path="$(command -v -- "$command_name")" || command_not_found "$command_name"
+
+    local -a cmd=("$command_path" "$@")
+    wrap_detach cmd
+
+    wait_for_vpn_handshake
+
+    exec sudo -E \
+        ip netns exec "$NS" \
+        sudo -EHu "$RUN_AS" -- \
+        "${cmd[@]}"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--detach)
+            DETACH=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            usage
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+[[ $# -gt 0 ]] || usage
+
+case "$1" in
+    firefox)
+        shift
+        run_firefox "$@"
+        ;;
+    *)
+        run_generic "$@"
+        ;;
+esac

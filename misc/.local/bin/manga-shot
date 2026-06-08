@@ -1,0 +1,42 @@
+#! /bin/bash
+
+NEW=false
+SAVE=false
+UNDO=false
+
+while getopts "nsu" flag; do
+    case "${flag}" in
+        n)
+            NEW=true
+            ;;
+        s)
+            SAVE=true
+            ;;
+        u)
+            UNDO=true
+            ;;
+    esac
+done
+
+if $NEW; then
+    MANGA_DIR=$(mktemp -d $HOME/Pictures/manga_XXXXXX)
+    ID=0
+    SLURP=$(slurp)
+    echo $SLURP > $MANGA_DIR/slurp.txt
+else
+    MANGA_DIR=$(ls -drt $HOME/Pictures/manga_*/ | tail -n 1)
+    ID=$(cat $MANGA_DIR/id.txt)
+    SLURP=$(cat $MANGA_DIR/slurp.txt)
+fi
+
+if $UNDO; then
+    rm $MANGA_DIR/$ID.png
+    ((ID--))
+fi
+
+if $SAVE; then
+    ((ID++))
+    grim -l 9 -g "$SLURP" "$MANGA_DIR/$ID.png"
+fi
+
+echo $ID > $MANGA_DIR/id.txt

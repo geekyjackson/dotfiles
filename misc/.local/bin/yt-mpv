@@ -1,0 +1,203 @@
+#!/bin/bash
+set -euo pipefail
+
+# -----------------------------
+# Defaults
+# -----------------------------
+verbose=false
+save=true
+partial=false
+predownload=false
+dir=~/Videos/yt-dlp/
+cookies=false
+input=""
+stdout_log="/home/jackson/Videos/yt-dlp/logs/stdout.log"
+stderr_log="/home/jackson/Videos/yt-dlp/logs/stderr.log"
+
+
+# -----------------------------
+# Usage
+# -----------------------------
+usage() {
+    cat <<'EOF'
+Usage:
+  yt-mpv [options] [INPUT]
+
+If INPUT is not provided, it will be read from stdin.
+
+Options:
+  -h, --help            Show this help message
+  -v, --verbose         Enable verbose output
+  -d, --dir VALUE       Output directory (default: ~/Videos/yt-dlp)
+  --save
+  --nosave
+  --partial
+  --predownload
+  --cookies
+EOF
+}
+
+# -----------------------------
+# Parse flags
+# -----------------------------
+while (( $# > 0 )); do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--verbose)
+            verbose=true
+            shift
+            ;;
+        -d|--dir)
+            dir="${2:-}"
+            [[ -z "dir" ]] && { echo "Missing value for --dir"; exit 1; }
+            shift 2
+            ;;
+        --save)
+            save=true
+            shift
+            ;;
+        --nosave)
+            save=false
+            shift
+            ;;
+        --partial)
+            partial=true
+            shift
+            ;;
+        --predownload)
+            predownload=true
+            shift
+            ;;
+        --cookies)
+            cookies=true
+            shift
+            ;;
+        --firefox)
+            hyprctl dispatch sendshortcut , mouse:273, 
+            sleep 0.5 
+            hyprctl dispatch sendshortcut , l,
+            input="$(wl-paste)"
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# -----------------------------
+# Read main input
+# -----------------------------
+if [ -z $input ]; then
+    if [[ $# -gt 0 ]]; then
+        # Positional argument takes precedence"
+        input="$1"
+    elif [[ ! -t 0 ]]; then
+        # Read from stdin if piped
+        input="$(cat)"
+    else
+        echo "Error: no input provided" >&2
+        usage
+        exit 1
+    fi
+fi
+
+# -----------------------------
+#  Setup
+# -----------------------------
+
+$cookies && yt-dlp --cookies-from-browser firefox
+
+# remove extra url nonsense after first '&'
+url="${input%%&*}"
+
+mkdir -p -- "$dir"
+
+# -----------------------------
+#  Main logic
+# -----------------------------
+
+notify() {
+    notify-send \
+        -h string:x-canonical-private-synchronous:yt-dl \
+        $1 "yt-dlp" "${2:-}"
+}
+
+download_video() {
+    yt-dlp \
+        --ignore-config \
+        --embed-metadata \
+        --print after_move:filepath \
+        --progress \
+        --paths "$dir" \
+        -N 5 \
+        "$1"
+}
+
+last_line=""
+update_status() {
+    local msg
+    while IFS= read -r -d $'\r' msg; do
+        [[ -z "$msg" ]] && continue
+        last_line="$msg"
+        echo "$last_line"
+        n=$(echo "$msg" | grep -oP '([0-9]+)(?=\.[0-9]+%)' | head -n 1)
+        echo "-h int:value:$n -t -1"
+        [[ -z "$n" ]] && notify "-h int:value:$n -t -1"
+    done
+}
+
+if $predownload; then
+    notify '-t -11' 'Starting download'
+    
+    if download_video "$url" \
+        > >(tee "$stdout_log" | update_status) \
+        2> >(tee "$stderr_log" >&2)
+    then
+        notify '-t 5000' 'Download finished'
+        mpv "$last_line"
+    else
+        notify '-t 5000' "Error - check log file\n$stderr_log"
+    fi
+
+    exit 0
+fi
+    
+readarray -t meta < <(yt-dlp --skip-download --print title --print ext --print duration $url)
+name=${meta[0]}
+ext=${meta[1]}
+duration=${meta[2]}
+
+dst="$dir/$name.$ext"
+
+temp=$(mktemp $dir/temp-XXXX.$ext)
+echo "writing to temp file: $temp"
+
+mpv --demuxer-max-bytes=2GiB \
+    --demuxer-max-back-bytes=2GiB \
+    --stream-record="$temp" \
+    "$url"
+
+local_duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1  "$temp")
+diff=$((duration - ${local_duration%%.*}))
+absdiff=${diff#-}
+
+if (( save && ( partial || (absdiff -lt 2) ) )); then
+    echo "Moving to: $dst"
+    mv "$temp" "$dst"
+else
+    echo "Full video not downloaded. Deleting temp file."
+    rm $temp
+fi
+

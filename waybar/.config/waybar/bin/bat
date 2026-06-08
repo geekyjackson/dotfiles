@@ -1,0 +1,30 @@
+#!/bin/bash
+
+e1=$(awk -F'=' \
+    '/POWER_SUPPLY_ENERGY_NOW/ {print $2}' \
+    /sys/class/power_supply/BAT0/uevent
+)
+t1=$(date +%s%1N)
+
+while true; do 
+    sleep 10
+
+    e2=$(awk -F'=' \
+        '/POWER_SUPPLY_ENERGY_NOW/ {print $2}' \
+        /sys/class/power_supply/BAT0/uevent
+    )
+    t2=$(date +%s%1N)
+
+    dt=$((t2-t1))
+    de=$((e2-e1))
+    dedt=$(( $de * 10 / $dt))
+    t_rem=$(($e2 / -$dedt))
+
+    t_hour=$((t_rem/3600))
+    t_min=$(( t_rem/60 - t_hour*60))
+
+    echo "dedt=$dedt -- Time remaining: $t_hour:$t_min"
+
+    e1=$e2
+    t1=$t2
+done
