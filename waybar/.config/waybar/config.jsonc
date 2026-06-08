@@ -33,5 +33,22 @@
     "clock": {
         "format": "{:%I:%M %p}"
     }
+},
+{
+    "output": ["eDP-1"],
+    "position": "right",
+    "margin": "8 8 8 0",
+    "name": "verticalbar",
+    "include": [
+        "config_general.json"
+    ],
+    "hyprland/workspaces": {
+        "workspace-taskbar": {
+            "orientation": "vertical"
+        }
+    },
+    "clock": {
+        "format": "{:%I\n%M\n%p}"
+    }
 }
 ]

@@ -12,6 +12,7 @@
         "pulseaudio#speaker",
         "network",
         "bluetooth",
+        "battery",
         "custom/power",
         "clock"
     ],
@@ -86,7 +87,10 @@
             "critical": 10
         },
         "format": "{icon}",
-        "format-icons": ["", "", "", "", ""],
+        "format-icons": {
+            "default": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+            "charging": ["󰢟", "󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"]
+        },
         "tooltip-format": "capacity: {capacity}%\ntime: {time}\ntimeTo: {timeTo}\nCycles: {cycles}\nHealth: {health}%",
         "max-length": 25
     },
