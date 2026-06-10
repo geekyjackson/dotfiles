@@ -50,7 +50,7 @@ hl.monitor({
 local terminal = "kitty"
 -- local menu = "hyprlauncher"
 local menu = "wofi --show drun"
-local browser = "firefox"
+local browser = "zen-browser"
 
 
 -------------------
