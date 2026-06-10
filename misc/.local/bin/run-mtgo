@@ -2,7 +2,7 @@
 
 defaultcmd="mtgo"
 
-image=docker.io/panard/mtgo:pr199
+image=docker.io/panard/mtgo:latest
 docker_client=docker
 limit_cpus=0
 name=mtgo_running
@@ -319,7 +319,6 @@ fi
 if [ ${limit_cpus} -gt 0 ]; then
     opts="${opts} --cpuset-cpus 0-$(( ${limit_cpus} - 1 ))"
 fi
-
 
 docker_mtgo() {
     #run ${docker_client} run --privileged --rm -e DISPLAY \
