@@ -75,7 +75,7 @@
         "format-wifi": "",
         "format-ethernet": "󰈀", 
         "format-disconnected": "⚠",
-        "on-click": "nm-connection-editor",
+        "on-click": "kitty --class kitty-float bash -c nmtui",
         "tooltip-format": "Interface: {ifname}\nIP: {gwaddr}\nSSID: {essid}\nStrength: {signaldBm} dBm\nFrequency: {frequency} GHz"
     },
     "battery": {

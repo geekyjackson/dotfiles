@@ -430,6 +430,14 @@ hl.window_rule({
   center = true,
 })
 
+hl.window_rule({
+  name = "kitty-float",
+  match = { initial_class = "^kitty-float$" },
+  size = {1400, 842},
+  float = true,
+  center = true,
+})
+
 -- Any non-scratchpad window opened while special:kitty is active
 -- gets moved back to the previous normal workspace.
 hl.window_rule({
