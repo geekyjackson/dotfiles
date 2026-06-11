@@ -1,57 +1,67 @@
-window {
-	font-size: 22px;
-    background: #282828;
-    border-radius: 10px;
+/* the window itself */
+#window {
 }
 
-#input {
-    padding: 5px;
-	margin: 5px;
-   	padding-left: 20px;
-	border: none;
-    color: #8ec07c;
-    background-color: #282828;
-    border-radius: 10px;
-    margin: 5px;
-    margin-bottom: 2px;
-}
-
-#input:focus {
-    border: 0px solid #282828;
-	margin-bottom: 0px;
-}
-
-#inner-box {
-	margin: 5px;
-	border: 10px;
-	padding-left: 15px;
-	padding-right: 15px;
-	color: #ebdbb2;
-	background-color: #282828;
-	border-radius: 10px;
-}
-
+/* the box that contains everything */
 #outer-box {
+	background-color: #1D2021;
     margin: 0px;
-	border-radius: 10px;
-	background-color: #282828;
+    border: 1px solid #fbf1c7;
+    border-radius: 10px;
 }
 
+/* the search bar */
+#input {
+    background-color: #2828282;
+    color: #EBDBB2;
+	font-size: 22px;
+	margin: 5px 5px 2px 5px;
+    padding: 5px 5px 5px 20px;
+    border: none;
+    border-radius: 5px;
+    box-shadow: none;
+}
+
+/* the scrolled window containing all of the entries */
 #scroll {
-    margin-top: 5px;
+    margin: 5px 0px;
 	border: none;
     border-radius: 10px;
-    margin-bottom: 5px;
 }
 
+/* the box containing all of the entries */
+#inner-box {
+	background-color: #1d2021;
+	color: #ebdbb2;
+	margin: 5px;
+    padding: 0px 15px;
+	border: 10px;
+	border-radius: 10px;
+}
+
+/* all images in entries displayed in image mode */
+#img {
+}
+
+/* all the text in entries */
+#text { 
+    padding-left: 5px
+}
+
+/* all entries */
 #entry {
 	font-size: 17px;
 	padding: .30em;
 }
 
+/* all entries currently selected */ 
 #entry:selected {
+	background: #665c54;
+	color: #ebdbb2;
 	border: 10px;
 	border-radius: 10px;
-	background: #689d6a;
-	color: #ebdbb2;
+}
+
+/* all boxes shown when expanding entries with multiple actions */
+#expander-box {
 }

@@ -77,7 +77,7 @@ button:hover {
 }
 
 #workspaces button.visible {
-    border-color: @light1; 
+    border-color: @light0; 
 }
 
 window.horizontalbar #workspaces button {
@@ -120,7 +120,7 @@ window.verticalbar #workspaces .workspace-label {
 /* Modules Right */
 
 .modules-right {
-    border: 1px solid @light1;
+    border: 1px solid @light0;
     background-color: @dark0_hard;    
 }
 
