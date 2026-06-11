@@ -1,0 +1,4 @@
+[Desktop Entry]
+Name=Set Timezone
+Type=Application
+Exec=sh -c "timedatectl set-timezone $(timedatectl list-timezones | wofi --dmenu)"
