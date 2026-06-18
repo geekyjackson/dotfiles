@@ -418,16 +418,7 @@ hl.bind(mainMod .. " + SHIFT + S", hl.dsp.window.move({ workspace = "special:mag
 
 hl.workspace_rule({
   workspace = "special:kitty",
-  on_created_empty = "kitty --class kitty-special --title kitty-special"
-})
-
-hl.window_rule({
-  name = "kitty-special-scratchpad",
-  match = { initial_class = "^kitty-special$" },
-  workspace = "special:kitty silent",
-  size = {1202, 720},
-  float = true,
-  center = true,
+  on_created_empty = "kitty --class kitty-float"
 })
 
 hl.window_rule({
@@ -444,7 +435,7 @@ hl.window_rule({
   name = "keep-launched-apps-out-of-kitty-special",
   match = {
     workspace = "special:kitty",
-    initial_class = "negative:^kitty-special$",
+    initial_class = "negative:^kitty-float$",
   },
   workspace = "m+0 silent",
 })
