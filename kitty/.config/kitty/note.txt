@@ -1,0 +1,3 @@
+gruvbox dark background set to be slightly-off,
+so that non-transparent gruvbox-dark backgrounds can be set,
+i.e. in neovim
