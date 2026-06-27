@@ -4,7 +4,7 @@ defaultcmd="mtgo"
 
 image=docker.io/panard/mtgo:latest
 docker_client=docker
-limit_cpus=0
+limit_cpus=32
 name=mtgo_running
 cmd=$defaultcmd
 cmdargs=""

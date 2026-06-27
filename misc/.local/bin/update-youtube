@@ -1,276 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_path="/home/jackson/Media/YouTube ASMR"
+dir="$HOME/Documents/code/youtube"
+py="$dir/.venv/bin/python"
+script="$dir/youtube_asmr.py"
 
-downloaded_archive_name='downloaded.txt'
-age_restricted_archive_name='age-restricted.txt'
-members_only_archive_name='members-only.txt'
-filter_skipped_archive_name='filter-skipped.txt'
+[[ -x "$py" ]] || { echo "Missing Python venv: $py" >&2; exit 1; }
+[[ -f "$script" ]] || { echo "Missing script: $script" >&2; exit 1; }
 
-log_dir="$base_path/_logs"
-log_file="$log_dir/youtube-asmr-$(date '+%Y-%m-%d_%H-%M-%S').log"
+case "${1:-}" in
+  -h|--help)
+    cat <<EOF
+Usage: youtube-asmr [OPTIONS]
 
-mkdir -p "$log_dir"
-exec > >(tee -a "$log_file") 2>&1
+Run the YouTube ASMR downloader through the VPN wrapper.
 
-echo "Logging to: $log_file"
-echo "Started:    $(date)"
+Options:
+  -h, --help    Show this help message and exit
+  -u, --update  Update pip and yt-dlp in the script virtualenv
 
-archive_entry_for_id() {
-    local video_id="$1"
-    printf 'youtube %s\n' "$video_id"
-}
+Examples:
+  youtube-asmr
+  youtube-asmr --update
+EOF
+    exit 0
+    ;;
 
-archive_contains_id() {
-    local archive="$1"
-    local video_id="$2"
-    local entry
+  -u|--update)
+    "$py" -m pip install -U pip "yt-dlp[default]"
+    exit 0
+    ;;
+esac
 
-    entry="$(archive_entry_for_id "$video_id")"
-
-    [[ -f "$archive" ]] && grep -Fxq "$entry" "$archive"
-}
-
-append_id_to_archive() {
-    local archive="$1"
-    local video_id="$2"
-    local entry
-
-    entry="$(archive_entry_for_id "$video_id")"
-
-    touch "$archive"
-
-    if ! grep -Fxq "$entry" "$archive"; then
-        printf '%s\n' "$entry" >> "$archive"
-        echo "Added to $(basename "$archive"): $entry"
-    else
-        echo "Already listed in $(basename "$archive"): $entry"
-    fi
-}
-
-detect_fatal_reason() {
-    local yt_log="$1"
-
-    if grep -Eiq 'Sign in to confirm.*not a bot|confirm.*not a bot|not a bot' "$yt_log"; then
-        echo "bot-check"
-        return 0
-    fi
-
-    return 1
-}
-
-detect_skip_reason() {
-    local yt_log="$1"
-
-    if grep -Eiq 'does not pass filter .*skipping' "$yt_log"; then
-        echo "filter-skipped"
-        return 0
-    fi
-
-    if grep -Eiq 'Sign in to confirm your age|confirm your age|age-restricted|inappropriate for some users' "$yt_log"; then
-        echo "age-restricted"
-        return 0
-    fi
-
-    if grep -Eiq 'Join this channel|get access to members-only|members-only content|members only' "$yt_log"; then
-        echo "members-only"
-        return 0
-    fi
-
-    return 1
-}
-
-download_playlist_into_dir() {
-    local playlist_url="$1"
-    local target_dir="$2"
-
-    local downloaded_archive="$target_dir/$downloaded_archive_name"
-    local age_restricted_archive="$target_dir/$age_restricted_archive_name"
-    local members_only_archive="$target_dir/$members_only_archive_name"
-    local filter_skipped_archive="$target_dir/$filter_skipped_archive_name"
-
-    local ids_file
-    local scan_log
-    local rc
-    local fatal_reason
-
-    ids_file="$(mktemp)"
-    scan_log="$(mktemp)"
-
-    touch "$downloaded_archive" "$age_restricted_archive" "$members_only_archive" "$filter_skipped_archive"
-
-    local common_opts=(
-        --download-archive "$downloaded_archive"
-        --sleep-requests 1.5
-        --sleep-interval 20
-        --max-sleep-interval 30
-        -f bestaudio
-        -x
-        --mtime
-        --embed-thumbnail
-        --embed-metadata
-        --embed-chapters
-        -P "$target_dir"
-        --windows-filenames
-        --match-filters "title ~= (?i)(asmr|sleep|whisper|tingles|3dio)"
-        -o "[%(upload_date>%Y-%m-%d)s] %(title)+.200U.%(ext)s"
-    )
-
-    echo
-    echo "Scanning:          $playlist_url"
-    echo "Target:            $target_dir"
-    echo "Downloaded list:   $downloaded_archive"
-    echo "Age-restricted:    $age_restricted_archive"
-    echo "Members-only:      $members_only_archive"
-    echo "Filter-skipped:    $filter_skipped_archive"
-
-    set +e
-    vpn run yt-dlp \
-        --flat-playlist \
-        --ignore-errors \
-        --skip-download \
-        --print "%(id)s" \
-        "$playlist_url" \
-        > "$ids_file" \
-        2> >(tee "$scan_log" >&2)
-    rc=$?
-    set -e
-
-    if fatal_reason="$(detect_fatal_reason "$scan_log")"; then
-        echo "Fatal YouTube condition during playlist scan: $fatal_reason" >&2
-        echo "Exiting instead of continuing, because YouTube is requiring bot verification." >&2
-        rm -f "$ids_file" "$scan_log"
-        exit 75
-    fi
-
-    if (( rc != 0 )); then
-        echo "Playlist scan failed: $playlist_url, rc=$rc" >&2
-        rm -f "$ids_file" "$scan_log"
-        return 0
-    fi
-
-    while IFS= read -r video_id; do
-        local video_url="https://www.youtube.com/watch?v=${video_id}"
-        local item_log
-        local reason
-
-        if archive_contains_id "$downloaded_archive" "$video_id"; then
-            # echo "Skipping already downloaded: $video_url"
-            continue
-        fi
-
-        if archive_contains_id "$age_restricted_archive" "$video_id"; then
-            # echo "Skipping known age-restricted: $video_url"
-            continue
-        fi
-
-        if archive_contains_id "$members_only_archive" "$video_id"; then
-            # echo "Skipping known members-only: $video_url"
-            continue
-        fi
-
-        if archive_contains_id "$filter_skipped_archive" "$video_id"; then
-            # echo "Skipping known filter-skipped: $video_url"
-            continue
-        fi
-
-        item_log="$(mktemp)"
-
-        echo
-        echo "Downloading: $video_url"
-
-        set +e
-        vpn run yt-dlp "${common_opts[@]}" "$video_url" 2>&1 | tee "$item_log"
-        rc=${PIPESTATUS[0]}
-        set -e
-
-        if fatal_reason="$(detect_fatal_reason "$item_log")"; then
-            echo "Fatal YouTube condition: $fatal_reason" >&2
-            echo "Video: $video_url" >&2
-            echo "Exiting instead of continuing, because YouTube is requiring bot verification." >&2
-            rm -f "$item_log" "$ids_file" "$scan_log"
-            exit 75
-        fi
-
-        if reason="$(detect_skip_reason "$item_log")"; then
-            case "$reason" in
-                age-restricted)
-                    echo "Classified as age-restricted: $video_url"
-                    append_id_to_archive "$age_restricted_archive" "$video_id"
-                    ;;
-                members-only)
-                    echo "Classified as members-only: $video_url"
-                    append_id_to_archive "$members_only_archive" "$video_id"
-                    ;;
-                filter-skipped)
-                    echo "Classified as filter-skipped: $video_url"
-                    append_id_to_archive "$filter_skipped_archive" "$video_id"
-                    ;;
-            esac
-
-            rm -f "$item_log"
-            continue
-        fi
-
-        if (( rc == 0 )); then
-            echo "Completed: $video_url"
-            rm -f "$item_log"
-            continue
-        fi
-
-        echo "Download failed without permanent-skip classification: $video_url, rc=$rc" >&2
-        rm -f "$item_log"
-    done < <(awk '/^[A-Za-z0-9_-]{11}$/ { print }' "$ids_file" | awk '!seen[$0]++')
-
-    rm -f "$ids_file" "$scan_log"
-
-    echo "Completed playlist pass: $playlist_url"
-    return 0
-}
-
-process_channel() {
-    local channel_dir="$1"
-
-    [[ -d "$channel_dir" ]] || return 0
-
-    local videos_dir="$channel_dir/Videos"
-    local live_dir="$channel_dir/Live"
-    local channel_name
-    local yt_url
-
-    channel_name="$(basename "$channel_dir")"
-    yt_url="https://www.youtube.com/@${channel_name}"
-
-    if [[ -d "$videos_dir" ]]; then
-        download_playlist_into_dir "$yt_url/videos" "$videos_dir"
-    else
-        echo "Missing dir: $videos_dir"
-    fi
-
-    if [[ -d "$live_dir" ]]; then
-        download_playlist_into_dir "$yt_url/streams" "$live_dir"
-    else
-        echo "Missing dir: $live_dir"
-    fi
-}
-
-main() {
-    [[ -d "$base_path" ]] || {
-        echo "Missing base dir: $base_path" >&2
-        exit 1
-    }
-
-    local channel_dir
-
-    shopt -s nullglob
-
-    for channel_dir in "$base_path"/*; do
-        [[ "$(basename "$channel_dir")" == _* ]] && continue
-        process_channel "$channel_dir"
-    done
-
-    shopt -u nullglob
-}
-
-main "$@"
+exec vpn run "$py" "$script" "$@"

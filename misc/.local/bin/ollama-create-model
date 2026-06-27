@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage:
+#   ./create-model path/to/model.gguf
+#   ./create-model path/to/model.gguf model-name
+
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "Error: ollama is not installed or not in PATH." >&2
+    exit 1
+fi
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "Usage: $0 <model.gguf> [model-name]" >&2
+    exit 1
+fi
+
+gguf_file="$1"
+
+if [ ! -f "$gguf_file" ]; then
+    echo "Error: file not found: $gguf_file" >&2
+    exit 1
+fi
+
+case "$gguf_file" in
+*.gguf | *.GGUF) ;;
+*)
+    echo "Error: file must end in .gguf or .GGUF" >&2
+    exit 1
+    ;;
+esac
+
+abs_gguf="$(realpath "$gguf_file")"
+
+if [ $# -eq 2 ]; then
+    model_name="$2"
+else
+    base="$(basename "$gguf_file")"
+    model_name="${base%.*}"
+    model_name="$(echo "$model_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
+fi
+
+tmp_modelfile="$(mktemp)"
+trap 'rm -f "$tmp_modelfile"' EXIT
+
+cat >"$tmp_modelfile" <<EOF
+FROM $abs_gguf
+EOF
+
+echo "Creating Ollama model:"
+echo "  GGUF:  $abs_gguf"
+echo "  Name:  $model_name"
+
+ollama create "$model_name" -f "$tmp_modelfile"
+
+echo
+echo "Done."
+echo "Run it with:"
+echo "  ollama run $model_name"
