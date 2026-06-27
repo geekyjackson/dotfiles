@@ -1,0 +1,38 @@
+// ~/.config/yazi/.luarc.json
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+
+  "runtime.version": "Lua 5.5",
+
+  "runtime.path": [
+    "?.lua",
+    "?/init.lua",
+    "?/main.lua",
+    "plugins/?.yazi/main.lua",
+    "plugins/?.yazi/init.lua"
+  ],
+
+  "workspace.library": [
+    "~/.config/yazi/plugins/types.yazi",
+    "~/.config/yazi/plugins"
+  ],
+
+  "workspace.checkThirdParty": false,
+
+  "diagnostics.globals": [
+    "ya",
+    "fs",
+    "ui",
+    "ps",
+    "cx",
+    "rt",
+    "th",
+    "Url",
+    "Path",
+    "Err"
+  ],
+
+  "diagnostics.disable": [
+    "redefined-local"
+  ]
+}

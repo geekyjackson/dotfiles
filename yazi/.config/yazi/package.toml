@@ -13,5 +13,10 @@ use = "boydaihungst/gvfs"
 rev = "3abc0a2"
 hash = "eed89e75671723c8f9390a2862af0e4e"
 
+[[plugin.deps]]
+use = "yazi-rs/plugins:types"
+rev = "38efe09"
+hash = "9105494e98299f392aee95340066da9f"
+
 [flavor]
 deps = []
